@@ -1,8 +1,15 @@
 from flask import Flask, request, jsonify
+import os
+
 app = Flask(__name__)
 
-# Simulated in-memory story tracking
+# In-memory storage
 stories = {}
+
+# Root test route
+@app.route("/", methods=["GET"])
+def home():
+    return "Gossip Girl Storytelling API is running!"
 
 @app.route("/story", methods=["POST"])
 def create_story():
@@ -31,5 +38,7 @@ def get_summary(story_id):
         "majorEvents": [e["sceneText"][:60] for e in story.get("events", [])]
     })
 
+# Required for Render/Replit deployment
 if __name__ == "__main__":
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
