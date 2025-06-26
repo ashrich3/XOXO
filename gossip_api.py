@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import os
 import json
 import hashlib
+from collections import defaultdict
 
 app = Flask(__name__)
 
@@ -9,6 +10,7 @@ app = Flask(__name__)
 # In-memory story tracking
 # -------------------------------
 stories = {}
+relationships = defaultdict(lambda: defaultdict(str))  # evolving relationship memory
 
 @app.route("/", methods=["GET"])
 def home():
@@ -62,19 +64,31 @@ def restart_story(story_id):
 def add_event(story_id):
     data = request.json
     scene_text = data.get("sceneText", "")
+    char_list = data.get("charactersInScene", [])
+    emotion_map = data.get("emotions", {})
+
+    # Store the event
     stories[story_id]["events"].append(data)
 
     # Auto milestone logging
     if is_milestone_worthy(scene_text) and not already_logged(story_id, scene_text):
         milestone = {
             "scene": scene_text,
-            "characters": data.get("charactersInScene", []),
-            "emotions": data.get("emotions", {}),
+            "characters": char_list,
+            "emotions": emotion_map,
             "hash": hashlib.md5(scene_text.strip().encode()).hexdigest(),
             "source": "auto"
         }
         with open(f"milestones/{story_id}.json", "a") as f:
             f.write(json.dumps(milestone) + "\n")
+
+    # Auto-evolve relationships
+    for i, c1 in enumerate(char_list):
+        for c2 in char_list[i+1:]:
+            emotional_context = emotion_map.get(c1) or emotion_map.get(c2) or "interacted"
+            prev = relationships[c1][c2]
+            if emotional_context and emotional_context not in prev:
+                relationships[c1][c2] += f"{emotional_context}, "
 
     return jsonify({"status": "event added"})
 
@@ -87,14 +101,19 @@ def get_summary(story_id):
         "majorEvents": [e["sceneText"][:60] for e in story.get("events", [])]
     })
 
+@app.route("/relationships/<character>", methods=["GET"])
+def get_relationships(character):
+    character = character.lower()
+    return jsonify({character: relationships.get(character, {})})
+
 # -------------------------------
 # Canon rules
 # -------------------------------
 canon_rules = [
     "Gossip Girl's narration ended in Season 6 finale. Dan was revealed as Gossip Girl.",
     "Chuck and Blair are married and have a son, Henry.",
+    "Chuck was legally adopted by Lily van der Woodsen during her marriage to Bart Bass.",
     "Serena is the daughter of Lily and William. Her brother is Eric.",
-    "Chuck was adopted by Lily during her marriage to Bart Bass.",
     "Lily and William were shown together in the finale, suggesting remarriage.",
     "Chuck and Serena are adoptive siblings. Their relationship is loyal and emotionally bonded.",
     "Niklaus Von Wolfram is not romantically involved with Serena by default. All intimacy must be earned narratively.",
@@ -113,29 +132,97 @@ def get_canon_rules():
 # -------------------------------
 character_aliases = {
     "serena": "serena", "blair": "blair", "chuck": "chuck", "charles": "chuck",
-    "lily": "lily", "lilian": "lily", "niklaus": "niklaus", "nik": "niklaus",
-    "klaus": "niklaus", "noah": "noah", "nate": "nate", "nathaniel": "nate",
-    "dan": "dan", "daniel": "dan", "eric": "eric", "rufus": "rufus",
-    "william": "william", "vivian": "vivian"
+    "lily": "lily", "niklaus": "niklaus", "nik": "niklaus", "klaus": "niklaus",
+    "noah": "noah", "dan": "dan", "daniel": "dan", "vivian": "vivian"
 }
 
 characters = {
     "serena": {
         "name": "Serena van der Woodsen",
-        "personality": "Warm, effortlessly charming, impulsive, romantic, emotionally weighted by her past.",
-        "voiceTraits": ["Open", "Dreamy", "Unscripted intimacy"],
+        "personality": "Warm, magnetic, laid-back, spontaneous, and emotionally intuitive. Effortless charm. ESFP-like energy, but not driven by validation.",
+        "voiceTraits": ["Light but emotionally weighted", "Charismatic", "Playful subtext", "Unfiltered elegance"],
         "relationships": {
             "blair": "Best friend, rival",
             "dan": "First love, husband (series finale)",
-            "chuck": "Adoptive brother, loyal friend",
+            "chuck": "Adoptive brother",
             "lily": "Mother",
             "william": "Father",
-            "eric": "Younger brother"
+            "eric": "Younger brother",
+            "noah": "Romantic partner"
         },
-        "backstory": "Former NYC socialite and Upper East Side icon. Returned from boarding school in Season 1 with secrets and emotional baggage. Marries Dan in the series finale.",
-        "speechStyle": "Poetic, soft, emotionally immediate. Never rehearsed."
+        "speechStyle": "uses wit, soft, emotionally immediate. Never rehearsed."
+    },
+    "noah": {
+        "name": "Noah von Wolfram",
+        "personality": "Disciplined, exacting, emotionally reserved, and fiercely logical. Prefers control and structure over unpredictability.",
+        "voiceTraits": ["Dry wit", "Controlled", "Minimalist", "Introspective"],
+        "relationships": {
+            "serena": "Romantic partner",
+            "otto": "Father",
+            "niklaus": "Cousin",
+            "vivian": "Half-cousin"
+        },
+        "speechStyle": "Minimal, calculated. Rarely expressive, but meaningful."
+    },
+    "niklaus": {
+        "name": "Niklaus von Wolfram",
+        "personality": "World champion F1 driver and architect. Brilliant, sensual, emotionally restrained. Boyish charm veils intense focus and integrity.",
+        "voiceTraits": ["Dry, intelligent", "Quiet intensity", "Understated affection", "European formality"],
+        "relationships": {
+            "helena": "Mother; warm and close",
+            "dietrich": "Father; mutual respect, high expectations",
+            "otto": "Uncle; affectionate and playful",
+            "vivian": "Half-sister; bonded",
+            "noah": "Cousin; contrasts in temperament"
+        },
+        "speechStyle": "Elegant, clipped, powerful in brevity."
+    },
+    "blair": {
+        "name": "Blair Waldorf",
+        "personality": "Ambitious, strategic, fashion-forward, sharp-tongued. Privately vulnerable but fiercely self-controlled.",
+        "voiceTraits": ["Witty", "Poised", "Emotionally barbed", "Controlled vulnerability"],
+        "relationships": {
+            "serena": "Best friend and rival",
+            "chuck": "Husband, power couple",
+            "eleanor": "Mother; approval-seeking dynamic",
+            "lily": "Social ally, sometimes surrogate mother figure"
+        },
+        "speechStyle": "Ornate, biting, performative elegance."
+    },
+    "lily": {
+        "name": "Lily van der Woodsen",
+        "personality": "Elegant, composed, layered in regret and resilience. The matriarch in pearls.",
+        "voiceTraits": ["Sincere", "Polished", "Soft-edged authority"],
+        "relationships": {
+            "serena": "Daughter",
+            "eric": "Son",
+            "chuck": "Adoptive son",
+            "william": "Complicated romantic partner",
+            "rufus": "Ex-husband"
+        },
+        "speechStyle": "Calm, maternal, slightly guarded."
+    },
+    "vivian": {
+        "name": "Vivian Taylor",
+        "personality": "British wit, emotionally armored, glamorous, edgy. Actress with an intellect sharper than most people expect.",
+        "voiceTraits": ["Sardonic", "Charismatic", "Theatrical when it suits her"],
+        "relationships": {
+            "niklaus": "Half-brother; affection wrapped in barbs",
+            "noah": "Half-cousin; distant respect"
+        },
+        "speechStyle": "Elegant, guarded, and emotionally complex with humor."
+    },
+    "chuck": {
+        "name": "Chuck Bass",
+        "personality": "Cynical, emotionally rich, protective, sharp-minded. Controlled danger, elevated by love for Blair.",
+        "voiceTraits": ["Dark, seductive", "Emotionally complex", "Dry and deliberate"],
+        "relationships": {
+            "blair": "Wife, co-ruler, deeply in love",
+            "serena": "Adoptive sister",
+            "lily": "Adoptive mother"
+        },
+        "speechStyle": "Measured, heavy-lidded intimacy, often with a power undertone."
     }
-    # Add other characters as needed
 }
 
 @app.route("/characters/<name>", methods=["GET"])
@@ -164,9 +251,7 @@ def already_logged(story_id, scene_text):
     if not os.path.exists(path):
         return False
     with open(path, "r") as f:
-        return any(
-            json.loads(line).get("hash") == hash_value for line in f
-        )
+        return any(json.loads(line).get("hash") == hash_value for line in f)
 
 # -------------------------------
 # Milestone Logging
