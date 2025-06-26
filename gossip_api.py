@@ -104,7 +104,8 @@ def get_summary(story_id):
 @app.route("/relationships/<character>", methods=["GET"])
 def get_relationships(character):
     character = character.lower()
-    return jsonify({character: relationships.get(character, {})})
+    return jsonify({"relationships": relationships.get(character, {})})
+
 
 # -------------------------------
 # Canon rules
