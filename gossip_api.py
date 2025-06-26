@@ -10,7 +10,10 @@ app = Flask(__name__)
 # In-memory story tracking
 # -------------------------------
 stories = {}
-relationships = defaultdict(lambda: defaultdict(str))  # evolving relationship memory
+relationships = defaultdict(lambda: defaultdict(str))
+
+# Ensure milestone directory exists
+os.makedirs("milestones", exist_ok=True)
 
 @app.route("/", methods=["GET"])
 def home():
@@ -46,7 +49,7 @@ def create_story():
 def delete_story(story_id):
     if story_id in stories:
         del stories[story_id]
-        milestone_path = f"milestones/{story_id}.json"
+        milestone_path = os.path.join("milestones", f"{story_id}.json")
         if os.path.exists(milestone_path):
             os.remove(milestone_path)
         return jsonify({"status": f"{story_id} deleted"})
@@ -62,12 +65,17 @@ def restart_story(story_id):
 
 @app.route("/story/<story_id>/events", methods=["POST"])
 def add_event(story_id):
-    data = request.json
+    data = request.json or {}
     scene_text = data.get("sceneText", "")
     char_list = data.get("charactersInScene", [])
     emotion_map = data.get("emotions", {})
 
-    # Store the event
+    if not scene_text:
+        return jsonify({"error": "sceneText is required"}), 400
+
+    if story_id not in stories:
+        return jsonify({"error": "Story not found"}), 404
+
     stories[story_id]["events"].append(data)
 
     # Auto milestone logging
@@ -79,10 +87,14 @@ def add_event(story_id):
             "hash": hashlib.md5(scene_text.strip().encode()).hexdigest(),
             "source": "auto"
         }
-        with open(f"milestones/{story_id}.json", "a") as f:
-            f.write(json.dumps(milestone) + "\n")
+        milestone_path = os.path.join("milestones", f"{story_id}.json")
+        try:
+            with open(milestone_path, "a") as f:
+                f.write(json.dumps(milestone) + "\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to log milestone for story {story_id}: {e}")
 
-    # Auto-evolve relationships
+    # Evolving relationships
     for i, c1 in enumerate(char_list):
         for c2 in char_list[i+1:]:
             emotional_context = emotion_map.get(c1) or emotion_map.get(c2) or "interacted"
@@ -105,7 +117,6 @@ def get_summary(story_id):
 def get_relationships(character):
     character = character.lower()
     return jsonify({"relationships": relationships.get(character, {})})
-
 
 # -------------------------------
 # Canon rules
@@ -140,89 +151,81 @@ character_aliases = {
 characters = {
     "serena": {
         "name": "Serena van der Woodsen",
-        "personality": "Warm, magnetic, laid-back, spontaneous, and emotionally intuitive. Effortless charm. ESFP-like energy, but not driven by validation.",
-        "voiceTraits": ["Light but emotionally weighted", "Charismatic", "Playful subtext", "Unfiltered elegance"],
+        "personality": "Warm, magnetic, laid-back, spontaneous, and emotionally intuitive.",
+        "voiceTraits": ["Light but emotionally weighted", "Charismatic", "Playful subtext"],
         "relationships": {
             "blair": "Best friend, rival",
-            "dan": "First love, husband (series finale)",
+            "dan": "Ex-husband",
             "chuck": "Adoptive brother",
             "lily": "Mother",
             "william": "Father",
-            "eric": "Younger brother",
             "noah": "Romantic partner"
         },
-        "speechStyle": "uses wit, soft, emotionally immediate. Never rehearsed."
-    },
-    "noah": {
-        "name": "Noah von Wolfram",
-        "personality": "Disciplined, exacting, emotionally reserved, and fiercely logical. Prefers control and structure over unpredictability.",
-        "voiceTraits": ["Dry wit", "Controlled", "Minimalist", "Introspective"],
-        "relationships": {
-            "serena": "Romantic partner",
-            "otto": "Father",
-            "niklaus": "Cousin",
-            "vivian": "Half-cousin"
-        },
-        "speechStyle": "Minimal, calculated. Rarely expressive, but meaningful."
-    },
-    "niklaus": {
-        "name": "Niklaus von Wolfram",
-        "personality": "World champion F1 driver and architect. Brilliant, sensual, emotionally restrained. Boyish charm veils intense focus and integrity.",
-        "voiceTraits": ["Dry, intelligent", "Quiet intensity", "Understated affection", "European formality"],
-        "relationships": {
-            "helena": "Mother; warm and close",
-            "dietrich": "Father; mutual respect, high expectations",
-            "otto": "Uncle; affectionate and playful",
-            "vivian": "Half-sister; bonded",
-            "noah": "Cousin; contrasts in temperament"
-        },
-        "speechStyle": "Elegant, clipped, powerful in brevity."
+        "speechStyle": "Witty, soft, unfiltered, emotionally immediate."
     },
     "blair": {
         "name": "Blair Waldorf",
-        "personality": "Ambitious, strategic, fashion-forward, sharp-tongued. Privately vulnerable but fiercely self-controlled.",
-        "voiceTraits": ["Witty", "Poised", "Emotionally barbed", "Controlled vulnerability"],
+        "personality": "Ambitious, strategic, fashion-forward, sharp-tongued.",
+        "voiceTraits": ["Witty", "Poised", "Emotionally barbed"],
         "relationships": {
             "serena": "Best friend and rival",
-            "chuck": "Husband, power couple",
-            "eleanor": "Mother; approval-seeking dynamic",
-            "lily": "Social ally, sometimes surrogate mother figure"
+            "chuck": "Husband",
+            "eleanor": "Mother"
         },
-        "speechStyle": "Ornate, biting, performative elegance."
+        "speechStyle": "Elegant, biting, performative."
     },
-    "lily": {
-        "name": "Lily van der Woodsen",
-        "personality": "Elegant, composed, layered in regret and resilience. The matriarch in pearls.",
-        "voiceTraits": ["Sincere", "Polished", "Soft-edged authority"],
+    "noah": {
+        "name": "Noah von Wolfram",
+        "personality": "Disciplined, exacting, emotionally reserved, and logical.",
+        "voiceTraits": ["Dry wit", "Minimalist", "Introspective"],
         "relationships": {
-            "serena": "Daughter",
-            "eric": "Son",
-            "chuck": "Adoptive son",
-            "william": "Complicated romantic partner",
-            "rufus": "Ex-husband"
+            "serena": "Romantic partner",
+            "otto": "Father",
+            "niklaus": "Cousin"
         },
-        "speechStyle": "Calm, maternal, slightly guarded."
+        "speechStyle": "Minimal, deliberate."
+    },
+    "niklaus": {
+        "name": "Niklaus von Wolfram",
+        "personality": "F1 driver and architect. Brilliant, sensual, emotionally complex.",
+        "voiceTraits": ["Quiet intensity", "Boyish charm", "European polish"],
+        "relationships": {
+            "noah": "Cousin",
+            "otto": "Uncle",
+            "vivian": "Half-sister"
+        },
+        "speechStyle": "Clipped, intelligent, formal with subtext."
     },
     "vivian": {
         "name": "Vivian Taylor",
-        "personality": "British wit, emotionally armored, glamorous, edgy. Actress with an intellect sharper than most people expect.",
-        "voiceTraits": ["Sardonic", "Charismatic", "Theatrical when it suits her"],
+        "personality": "British wit, glamorous, sardonic. Emotionally guarded.",
+        "voiceTraits": ["Sardonic", "Charismatic", "Complex"],
         "relationships": {
-            "niklaus": "Half-brother; affection wrapped in barbs",
-            "noah": "Half-cousin; distant respect"
+            "niklaus": "Half-brother",
+            "noah": "Half-cousin"
         },
-        "speechStyle": "Elegant, guarded, and emotionally complex with humor."
+        "speechStyle": "Elegant, sharp, ironic."
+    },
+    "lily": {
+        "name": "Lily van der Woodsen",
+        "personality": "Elegant, composed, maternal. Privately conflicted.",
+        "voiceTraits": ["Sincere", "Polished", "Resilient"],
+        "relationships": {
+            "serena": "Daughter",
+            "chuck": "Adoptive son"
+        },
+        "speechStyle": "Measured, warm, restrained."
     },
     "chuck": {
         "name": "Chuck Bass",
-        "personality": "Cynical, emotionally rich, protective, sharp-minded. Controlled danger, elevated by love for Blair.",
-        "voiceTraits": ["Dark, seductive", "Emotionally complex", "Dry and deliberate"],
+        "personality": "Darkly romantic, intelligent, controlled. Deeply loyal.",
+        "voiceTraits": ["Seductive", "Calculated", "Emotionally charged"],
         "relationships": {
-            "blair": "Wife, co-ruler, deeply in love",
+            "blair": "Wife",
             "serena": "Adoptive sister",
             "lily": "Adoptive mother"
         },
-        "speechStyle": "Measured, heavy-lidded intimacy, often with a power undertone."
+        "speechStyle": "Low, deliberate, suggestive."
     }
 }
 
@@ -235,7 +238,34 @@ def get_character_profile(name):
     return jsonify(characters[true_key])
 
 # -------------------------------
-# Milestone Utility Functions
+# Milestones
+# -------------------------------
+@app.route("/milestones/<story_id>", methods=["POST"])
+def save_milestone(story_id):
+    data = request.json
+    path = os.path.join("milestones", f"{story_id}.json")
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(data) + "\n")
+        return jsonify({"status": "milestone saved"})
+    except Exception as e:
+        print(f"[ERROR] Could not save milestone: {e}")
+        return jsonify({"error": "Failed to save milestone"}), 500
+
+@app.route("/milestones/<story_id>", methods=["GET"])
+def view_milestones(story_id):
+    path = os.path.join("milestones", f"{story_id}.json")
+    if not os.path.exists(path):
+        return jsonify({"milestones": []})
+    try:
+        with open(path, "r") as f:
+            return jsonify({"milestones": [json.loads(line) for line in f]})
+    except Exception as e:
+        print(f"[ERROR] Could not load milestones: {e}")
+        return jsonify({"error": "Failed to load milestones"}), 500
+
+# -------------------------------
+# Milestone Utility
 # -------------------------------
 def is_milestone_worthy(text):
     text = text.lower()
@@ -247,32 +277,16 @@ def is_milestone_worthy(text):
     return any(phrase in text for phrase in keywords)
 
 def already_logged(story_id, scene_text):
-    path = f"milestones/{story_id}.json"
+    path = os.path.join("milestones", f"{story_id}.json")
     hash_value = hashlib.md5(scene_text.strip().encode()).hexdigest()
     if not os.path.exists(path):
         return False
-    with open(path, "r") as f:
-        return any(json.loads(line).get("hash") == hash_value for line in f)
-
-# -------------------------------
-# Milestone Logging
-# -------------------------------
-os.makedirs("milestones", exist_ok=True)
-
-@app.route("/milestones/<story_id>", methods=["POST"])
-def save_milestone(story_id):
-    data = request.json
-    with open(f"milestones/{story_id}.json", "a") as f:
-        f.write(json.dumps(data) + "\n")
-    return jsonify({"status": "milestone saved"})
-
-@app.route("/milestones/<story_id>", methods=["GET"])
-def view_milestones(story_id):
-    path = f"milestones/{story_id}.json"
-    if not os.path.exists(path):
-        return jsonify({"milestones": []})
-    with open(path, "r") as f:
-        return jsonify({"milestones": [json.loads(line) for line in f]})
+    try:
+        with open(path, "r") as f:
+            return any(json.loads(line).get("hash") == hash_value for line in f)
+    except Exception as e:
+        print(f"[ERROR] Failed to check milestone hash: {e}")
+        return False
 
 # -------------------------------
 # Deployment
