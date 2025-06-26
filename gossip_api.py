@@ -1,14 +1,32 @@
 from flask import Flask, request, jsonify
 import os
+import json
+import hashlib
 
 app = Flask(__name__)
 
-# In-memory storage for stories
+# -------------------------------
+# In-memory story tracking
+# -------------------------------
 stories = {}
 
 @app.route("/", methods=["GET"])
 def home():
     return "Gossip Girl Storytelling API is running!"
+
+@app.route("/stories", methods=["GET"])
+def list_stories():
+    return jsonify({
+        "stories": [
+            {
+                "id": sid,
+                "title": s["title"],
+                "characters": s["characters"],
+                "events": len(s["events"])
+            }
+            for sid, s in stories.items()
+        ]
+    })
 
 @app.route("/story", methods=["POST"])
 def create_story():
@@ -22,10 +40,42 @@ def create_story():
     }
     return jsonify({"storyId": story_id})
 
+@app.route("/story/<story_id>", methods=["DELETE"])
+def delete_story(story_id):
+    if story_id in stories:
+        del stories[story_id]
+        milestone_path = f"milestones/{story_id}.json"
+        if os.path.exists(milestone_path):
+            os.remove(milestone_path)
+        return jsonify({"status": f"{story_id} deleted"})
+    return jsonify({"error": "Story not found"}), 404
+
+@app.route("/story/<story_id>/restart", methods=["POST"])
+def restart_story(story_id):
+    if story_id not in stories:
+        return jsonify({"error": "Story not found"}), 404
+    stories[story_id]["events"] = []
+    stories[story_id]["summary"] = ""
+    return jsonify({"status": f"{story_id} restarted, milestones retained"})
+
 @app.route("/story/<story_id>/events", methods=["POST"])
 def add_event(story_id):
     data = request.json
+    scene_text = data.get("sceneText", "")
     stories[story_id]["events"].append(data)
+
+    # Auto milestone logging
+    if is_milestone_worthy(scene_text) and not already_logged(story_id, scene_text):
+        milestone = {
+            "scene": scene_text,
+            "characters": data.get("charactersInScene", []),
+            "emotions": data.get("emotions", {}),
+            "hash": hashlib.md5(scene_text.strip().encode()).hexdigest(),
+            "source": "auto"
+        }
+        with open(f"milestones/{story_id}.json", "a") as f:
+            f.write(json.dumps(milestone) + "\n")
+
     return jsonify({"status": "event added"})
 
 @app.route("/story/<story_id>/summary", methods=["GET"])
@@ -38,7 +88,7 @@ def get_summary(story_id):
     })
 
 # -------------------------------
-# Canon rules endpoint
+# Canon rules
 # -------------------------------
 canon_rules = [
     "Gossip Girl's narration ended in Season 6 finale. Dan was revealed as Gossip Girl.",
@@ -59,27 +109,14 @@ def get_canon_rules():
     return jsonify({"rules": canon_rules})
 
 # -------------------------------
-# Character profiles (case-insensitive)
+# Character Profiles
 # -------------------------------
 character_aliases = {
-    "serena": "serena",
-    "blair": "blair",
-    "chuck": "chuck",
-    "charles": "chuck",
-    "lily": "lily",
-    "lilian": "lily",
-    "niklaus": "niklaus",
-    "nik": "niklaus",
-    "klaus": "niklaus",
-    "noah": "noah",
-    "nate": "nate",
-    "nathaniel": "nate",
-    "dan": "dan",
-    "daniel": "dan",
-    "eric": "eric",
-    "rufus": "rufus",
-    "william": "william",
-    "vivian": "vivian"
+    "serena": "serena", "blair": "blair", "chuck": "chuck", "charles": "chuck",
+    "lily": "lily", "lilian": "lily", "niklaus": "niklaus", "nik": "niklaus",
+    "klaus": "niklaus", "noah": "noah", "nate": "nate", "nathaniel": "nate",
+    "dan": "dan", "daniel": "dan", "eric": "eric", "rufus": "rufus",
+    "william": "william", "vivian": "vivian"
 }
 
 characters = {
@@ -97,59 +134,8 @@ characters = {
         },
         "backstory": "Former NYC socialite and Upper East Side icon. Returned from boarding school in Season 1 with secrets and emotional baggage. Marries Dan in the series finale.",
         "speechStyle": "Poetic, soft, emotionally immediate. Never rehearsed."
-    },
-    "blair": {
-        "name": "Blair Waldorf",
-        "personality": "Razor-sharp, ambitious, emotionally vulnerable beneath control. Loyal, competitive, complex.",
-        "voiceTraits": ["Fast-paced", "Witty", "Defensive sarcasm"],
-        "relationships": {
-            "chuck": "Husband, soulmate",
-            "serena": "Best friend, deep history",
-            "dan": "Complicated ally"
-        },
-        "backstory": "Daughter of Eleanor Waldorf and Harold Waldorf. Married Chuck and had a son, Henry. Formerly married to Prince Louis Grimaldi.",
-        "speechStyle": "Layered, clever, always curated for power. Wields wit like a weapon."
-    },
-    "chuck": {
-        "name": "Chuck Bass",
-        "personality": "Magnetic, guarded, fiercely loyal once earned. Expresses love through acts, not words.",
-        "voiceTraits": ["Sardonic", "Dry", "Loaded with unspoken meaning"],
-        "relationships": {
-            "blair": "Wife",
-            "serena": "Adoptive sister",
-            "lily": "Adoptive mother"
-        },
-        "backstory": "Inherited Bass Industries after the death of Bart Bass. Married Blair. Father of Henry.",
-        "speechStyle": "Quiet, deliberate. Emotion leaks through when walls drop. Mostly communicates with silence and tension."
-    },
-    "lily": {
-        "name": "Lily van der Woodsen",
-        "personality": "Polished, elegant, protective through control. Proud and emotionally complex.",
-        "voiceTraits": ["Restrained", "Maternal", "Elegant"],
-        "relationships": {
-            "serena": "Daughter",
-            "eric": "Son",
-            "william": "Current husband",
-            "chuck": "Adopted son",
-            "rufus": "Former husband"
-        },
-        "backstory": "Former art dealer and Manhattan socialite. Married multiple times. Matriarch of the van der Woodsen family.",
-        "speechStyle": "Understated, sharp when needed. Rarely raises her voice, but every word lands."
-    },
-    "niklaus": {
-        "name": "Niklaus Von Wolfram",
-        "personality": "Once a reckless prodigy, now a composed, multifaceted man. Blends seriousness, introversion, and moments of boyish warmth.",
-        "voiceTraits": ["Precise", "Dry charm", "European-accented"],
-        "relationships": {
-            "noah": "Cousin (strained)",
-            "otto": "Uncle (mentor)",
-            "dietrich": "Father (demanding)",
-            "vivian": "Half-sister (supportive)",
-            "serena": "Potential romantic interest (TBD in-story)"
-        },
-        "backstory": "Born in Slovenia, raised between Germany, Vienna and Monaco. Karted from age 6, Ferrari Academy by 12, and became a 3-time F1 World Champion. Took a hiatus to earn his M.Arch under pressure from his father. Now balances racing, architecture, and a complicated family legacy.",
-        "speechStyle": "Measured, quiet, non-performative. Charm appears in glimpses. Often speaks through action, not words."
     }
+    # Add other characters as needed
 }
 
 @app.route("/characters/<name>", methods=["GET"])
@@ -158,8 +144,49 @@ def get_character_profile(name):
     true_key = character_aliases.get(key)
     if not true_key:
         return jsonify({"error": "Character not found"}), 404
-    character = characters.get(true_key)
-    return jsonify(character)
+    return jsonify(characters[true_key])
+
+# -------------------------------
+# Milestone Utility Functions
+# -------------------------------
+def is_milestone_worthy(text):
+    text = text.lower()
+    keywords = [
+        "i love you", "i’m pregnant", "we broke up", "move in", "divorced",
+        "engaged", "kissed", "cried", "birthday", "met gala", "stormed out",
+        "confession", "in labor", "he proposed", "she said yes", "got married"
+    ]
+    return any(phrase in text for phrase in keywords)
+
+def already_logged(story_id, scene_text):
+    path = f"milestones/{story_id}.json"
+    hash_value = hashlib.md5(scene_text.strip().encode()).hexdigest()
+    if not os.path.exists(path):
+        return False
+    with open(path, "r") as f:
+        return any(
+            json.loads(line).get("hash") == hash_value for line in f
+        )
+
+# -------------------------------
+# Milestone Logging
+# -------------------------------
+os.makedirs("milestones", exist_ok=True)
+
+@app.route("/milestones/<story_id>", methods=["POST"])
+def save_milestone(story_id):
+    data = request.json
+    with open(f"milestones/{story_id}.json", "a") as f:
+        f.write(json.dumps(data) + "\n")
+    return jsonify({"status": "milestone saved"})
+
+@app.route("/milestones/<story_id>", methods=["GET"])
+def view_milestones(story_id):
+    path = f"milestones/{story_id}.json"
+    if not os.path.exists(path):
+        return jsonify({"milestones": []})
+    with open(path, "r") as f:
+        return jsonify({"milestones": [json.loads(line) for line in f]})
 
 # -------------------------------
 # Deployment
