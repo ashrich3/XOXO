@@ -6,15 +6,39 @@ from collections import defaultdict
 
 app = Flask(__name__)
 
+# Ensure required directories exist
+os.makedirs("stories", exist_ok=True)
+os.makedirs("milestones", exist_ok=True)
+
 # -------------------------------
 # In-memory story tracking
 # -------------------------------
 stories = {}
 relationships = defaultdict(lambda: defaultdict(str))
 
-# Ensure milestone directory exists
-os.makedirs("milestones", exist_ok=True)
+# -------------------------------
+# Persistence Helpers
+# -------------------------------
+def load_story_from_disk(story_id):
+    try:
+        with open(f"stories/{story_id}.json", "r") as f:
+            stories[story_id] = json.load(f)
+            print(f"[DEBUG] Reloaded {story_id} from disk")
+            return True
+    except Exception as e:
+        print(f"[ERROR] Could not load {story_id}: {e}")
+        return False
 
+def save_story_to_disk(story_id):
+    try:
+        with open(f"stories/{story_id}.json", "w") as f:
+            json.dump(stories[story_id], f)
+    except Exception as e:
+        print(f"[ERROR] Could not save {story_id}: {e}")
+
+# -------------------------------
+# Routes
+# -------------------------------
 @app.route("/", methods=["GET"])
 def home():
     return "Gossip Girl Storytelling API is running!"
@@ -43,6 +67,7 @@ def create_story():
         "events": [],
         "summary": ""
     }
+    save_story_to_disk(story_id)
     return jsonify({"storyId": story_id})
 
 @app.route("/story/<story_id>", methods=["DELETE"])
@@ -50,17 +75,22 @@ def delete_story(story_id):
     if story_id in stories:
         del stories[story_id]
         milestone_path = os.path.join("milestones", f"{story_id}.json")
+        story_path = os.path.join("stories", f"{story_id}.json")
         if os.path.exists(milestone_path):
             os.remove(milestone_path)
+        if os.path.exists(story_path):
+            os.remove(story_path)
         return jsonify({"status": f"{story_id} deleted"})
     return jsonify({"error": "Story not found"}), 404
 
 @app.route("/story/<story_id>/restart", methods=["POST"])
 def restart_story(story_id):
     if story_id not in stories:
-        return jsonify({"error": "Story not found"}), 404
+        if not load_story_from_disk(story_id):
+            return jsonify({"error": "Story not found"}), 404
     stories[story_id]["events"] = []
     stories[story_id]["summary"] = ""
+    save_story_to_disk(story_id)
     return jsonify({"status": f"{story_id} restarted, milestones retained"})
 
 @app.route("/story/<story_id>/events", methods=["POST"])
@@ -74,11 +104,12 @@ def add_event(story_id):
         return jsonify({"error": "sceneText is required"}), 400
 
     if story_id not in stories:
-        return jsonify({"error": "Story not found"}), 404
+        if not load_story_from_disk(story_id):
+            return jsonify({"error": "Story not found"}), 404
 
     stories[story_id]["events"].append(data)
+    save_story_to_disk(story_id)
 
-    # Auto milestone logging
     if is_milestone_worthy(scene_text) and not already_logged(story_id, scene_text):
         milestone = {
             "scene": scene_text,
@@ -106,12 +137,36 @@ def add_event(story_id):
 
 @app.route("/story/<story_id>/summary", methods=["GET"])
 def get_summary(story_id):
-    story = stories.get(story_id, {})
+    if story_id not in stories:
+        if not load_story_from_disk(story_id):
+            return jsonify({"error": "Story not found"}), 404
+    story = stories[story_id]
     summary = " ".join(e["sceneText"] for e in story.get("events", []))[:500]
     return jsonify({
         "summary": summary,
         "majorEvents": [e["sceneText"][:60] for e in story.get("events", [])]
     })
+
+@app.route("/story/<story_id>/fork", methods=["POST"])
+def fork_story(story_id):
+    if story_id not in stories:
+        if not load_story_from_disk(story_id):
+            return jsonify({"error": "Source story not found"}), 404
+
+    source = stories[story_id]
+    new_id = f"story-{len(stories)+1}"
+
+    forked = {
+        "title": source["title"] + " (Fork)",
+        "characters": source["characters"],
+        "events": list(source["events"]),
+        "summary": source["summary"],
+        "forkedFrom": story_id
+    }
+
+    stories[new_id] = forked
+    save_story_to_disk(new_id)
+    return jsonify({"forkedId": new_id})
 
 @app.route("/relationships/<character>", methods=["GET"])
 def get_relationships(character):
@@ -237,6 +292,9 @@ def get_character_profile(name):
         return jsonify({"error": "Character not found"}), 404
     return jsonify(characters[true_key])
 
+characters_data = characters  # ✅ Move this AFTER the big character profiles block
+
+
 # -------------------------------
 # Milestones
 # -------------------------------
@@ -263,6 +321,76 @@ def view_milestones(story_id):
     except Exception as e:
         print(f"[ERROR] Could not load milestones: {e}")
         return jsonify({"error": "Failed to load milestones"}), 500
+@app.route("/generate-prompt/<story_id>", methods=["GET"])
+def generate_prompt(story_id):
+    if story_id not in stories:
+        if not load_story_from_disk(story_id):
+            return jsonify({"error": "Story not found"}), 404
+
+    story = stories[story_id]
+    title = story.get("title", "Untitled Story")
+    characters = story.get("characters", [])
+    events = story.get("events", [])
+    summary = story.get("summary", "")
+
+    # Load recent milestone if exists
+    milestone_path = os.path.join("milestones", f"{story_id}.json")
+    recent_milestones = []
+    if os.path.exists(milestone_path):
+        try:
+            with open(milestone_path, "r") as f:
+                all_milestones = [json.loads(line) for line in f]
+                recent_milestones = all_milestones[-3:]  # last 3 milestones
+        except Exception as e:
+            print(f"[ERROR] Reading milestones for prompt: {e}")
+
+    # Get recent event if no milestones
+    recent_events = [e["sceneText"] for e in events[-2:]] if not recent_milestones else []
+
+    # Canon core guidance
+    canon_block = "\n".join([
+        "GOSSIP GIRL CONTINUATION — SERIALIZED CANON FORMAT",
+        "",
+        "This is a continuation of the Gossip Girl universe, focusing on emotionally grounded, cinematic, character-driven drama.",
+        "Narrative must remain in third-person limited POV.",
+        "No character resets. All emotional and romantic developments must honor prior events.",
+        "Avoid fanfic tropes, amnesia plots, and any jealousy arcs unless explicitly canon.",
+        ""
+    ])
+
+    # Character relationship snapshot
+    character_info = []
+    for char in characters:
+        profile = characters_data.get(char.lower())
+        if profile:
+            desc = f"{profile['name']}: {profile['personality']}"
+            character_info.append(desc)
+
+    # Build the core prompt
+    prompt_lines = [
+        canon_block,
+        f"Title: {title}",
+        "",
+        "Main Characters:",
+        *character_info,
+        "",
+        "Story Summary:",
+        summary or "No summary saved.",
+        "",
+        "Recent Milestones:" if recent_milestones else "Recent Events:",
+    ]
+
+    if recent_milestones:
+        for m in recent_milestones:
+            prompt_lines.append(f"- {m['scene'][:280]}...")
+    else:
+        for e in recent_events:
+            prompt_lines.append(f"- {e[:280]}...")
+
+    prompt_lines.append("")
+    prompt_lines.append("Continue the scene or provide dramatic story options that build on this context:")
+
+    return jsonify({"prompt": "\n".join(prompt_lines)})
 
 # -------------------------------
 # Milestone Utility
