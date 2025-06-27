@@ -10,15 +10,11 @@ app = Flask(__name__)
 os.makedirs("stories", exist_ok=True)
 os.makedirs("milestones", exist_ok=True)
 
-# -------------------------------
-# In-memory story tracking
-# -------------------------------
+# In-memory data
 stories = {}
 relationships = defaultdict(lambda: defaultdict(str))
 
-# -------------------------------
-# Persistence Helpers
-# -------------------------------
+# Persistence helpers
 def load_story_from_disk(story_id):
     try:
         with open(f"stories/{story_id}.json", "r") as f:
@@ -36,15 +32,13 @@ def save_story_to_disk(story_id):
     except Exception as e:
         print(f"[ERROR] Could not save {story_id}: {e}")
 
-# Auto-load all stories from disk
+# Load all existing stories
 for filename in os.listdir("stories"):
     if filename.endswith(".json"):
         story_id = filename[:-5]
         load_story_from_disk(story_id)
 
-# -------------------------------
 # Canon rules
-# -------------------------------
 canon_rules = [
     "Gossip Girl's narration ended in Season 6 finale. Dan was revealed as Gossip Girl.",
     "Chuck and Blair are married and have a son, Henry.",
@@ -59,9 +53,7 @@ canon_rules = [
     "Do not pre-load romantic intimacy unless canon or established in-story."
 ]
 
-# -------------------------------
-# Character Profiles
-# -------------------------------
+# Character definitions
 character_aliases = {
     "serena": "serena", "blair": "blair", "chuck": "chuck", "charles": "chuck",
     "lily": "lily", "niklaus": "niklaus", "nik": "niklaus", "klaus": "niklaus",
@@ -148,7 +140,7 @@ characters = {
         "speechStyle": "Low, deliberate, suggestive."
     }
 }
-characters_data = characters  # alias for prompt generator
+characters_data = characters  # alias for prompts
 
 # -------------------------------
 # Routes
@@ -218,7 +210,6 @@ def add_event(story_id):
     stories[story_id]["events"].append(data)
     save_story_to_disk(story_id)
 
-    # Auto-log milestone-worthy
     if is_milestone_worthy(scene_text) and not already_logged(story_id, scene_text):
         milestone = {
             "scene": scene_text,
@@ -230,7 +221,6 @@ def add_event(story_id):
         with open(os.path.join("milestones", f"{story_id}.json"), "a") as f:
             f.write(json.dumps(milestone) + "\n")
 
-    # Update relationship graph
     for i, c1 in enumerate(char_list):
         for c2 in char_list[i+1:]:
             emotional_context = emotion_map.get(c1) or emotion_map.get(c2) or "interacted"
@@ -310,11 +300,10 @@ def generate_prompt(story_id):
 
     story = stories[story_id]
     title = story.get("title", "Untitled Story")
-    characters = story.get("characters", [])
+    characters_list = story.get("characters", [])
     events = story.get("events", [])
     summary = story.get("summary", "")
 
-    # Load recent milestone if exists
     milestone_path = os.path.join("milestones", f"{story_id}.json")
     recent_milestones = []
     if os.path.exists(milestone_path):
@@ -329,23 +318,27 @@ def generate_prompt(story_id):
         "",
         f"Title: {title}",
         "",
-        "Main Characters:",
-        *[f"{characters_data[c]['name']}: {characters_data[c]['personality']}" for c in characters if c in characters_data],
+        "Main Characters:"
+    ] + [
+        f"{characters_data[c]['name']}: {characters_data[c]['personality']}"
+        for c in characters_list if c in characters_data
+    ] + [
         "",
         "Story Summary:",
         summary or "No summary saved.",
         "",
-        "Recent Milestones:" if recent_milestones else "Recent Events:",
-        *(f"- {m['scene'][:280]}..." for m in recent_milestones) if recent_milestones else (f"- {e[:280]}..." for e in recent_events),
+        "Recent Milestones:" if recent_milestones else "Recent Events:"
+    ] + (
+        [f"- {m['scene'][:280]}..." for m in recent_milestones]
+        if recent_milestones else [f"- {e[:280]}..." for e in recent_events]
+    ) + [
         "",
         "Continue the scene or provide dramatic story options that build on this context:"
     ]
 
     return jsonify({"prompt": "\n".join(prompt_lines)})
 
-# -------------------------------
-# Utility Functions
-# -------------------------------
+# Milestone helpers
 def is_milestone_worthy(text):
     text = text.lower()
     return any(kw in text for kw in [
@@ -362,9 +355,7 @@ def already_logged(story_id, scene_text):
     with open(path, "r") as f:
         return any(json.loads(line).get("hash") == hash_value for line in f)
 
-# -------------------------------
-# Run the Server
-# -------------------------------
+# Server launch
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
