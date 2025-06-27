@@ -55,10 +55,46 @@ canon_rules = [
 
 # Character definitions
 character_aliases = {
-    "serena": "serena", "blair": "blair", "chuck": "chuck", "charles": "chuck",
-    "lily": "lily", "niklaus": "niklaus", "nik": "niklaus", "klaus": "niklaus",
-    "noah": "noah", "dan": "dan", "daniel": "dan", "vivian": "vivian"
+    # Serena
+    "serena": "serena",
+    "serena van der woodsen": "serena",
+
+    # Blair
+    "blair": "blair",
+    "blair waldorf": "blair",
+    "blair waldorf bass": "blair",
+
+    # Chuck
+    "chuck": "chuck",
+    "charles": "chuck",
+    "chuck bass": "chuck",
+
+    # Lily
+    "lily": "lily",
+    "lily van der woodsen": "lily",
+    "lily bass": "lily",
+    "lily rhodes": "lily",
+
+    # Niklaus
+    "niklaus": "niklaus",
+    "nik": "niklaus",
+    "klaus": "niklaus",
+    "niklaus von wolfram": "niklaus",
+
+    # Noah
+    "noah": "noah",
+    "noah von wolfram": "noah",
+
+    # Dan
+    "dan": "dan",
+    "daniel": "dan",
+    "dan humphrey": "dan",
+
+    # Vivian
+    "vivian": "vivian",
+    "vivian taylor": "vivian"
 }
+
 
 characters = {
     "serena": {
