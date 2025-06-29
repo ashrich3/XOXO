@@ -11,10 +11,15 @@ app = Flask(__name__)
 TURSO_URL = os.getenv("TURSO_URL")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN")
 
+print("🔍 TURSO_URL =", TURSO_URL)
+print("🔍 TURSO_TOKEN =", TURSO_TOKEN[:10] + "..." if TURSO_TOKEN else "MISSING")
+
+
 conn = libsql_client.create_client_sync(
-    url=TURSO_URL,
-    auth_token=TURSO_TOKEN
+    url=os.getenv("TURSO_URL"),
+    auth_token=os.getenv("TURSO_TOKEN")
 )
+
 
 # --- Create tables if they don't exist ---
 conn.execute("""
