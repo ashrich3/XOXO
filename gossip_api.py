@@ -3,42 +3,98 @@ import os
 import json
 import hashlib
 from collections import defaultdict
+import libsql_client
 
 app = Flask(__name__)
 
-# Ensure required directories exist
-os.makedirs("stories", exist_ok=True)
-os.makedirs("milestones", exist_ok=True)
+# Turso DB setup
+TURSO_URL = os.getenv("TURSO_URL")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN")
 
-# In-memory data
+conn = libsql_client.create_client_sync(
+    url=TURSO_URL,
+    auth_token=TURSO_TOKEN
+)
+
+# --- Create tables if they don't exist ---
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS stories (
+        id TEXT PRIMARY KEY,
+        data TEXT
+    )
+""")
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS milestones (
+        story_id TEXT,
+        data TEXT
+    )
+""")
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS characters (
+        id TEXT PRIMARY KEY,
+        data TEXT
+    )
+""")
+
+# ---------------------------
+# In-memory cache
+# ---------------------------
 stories = {}
 relationships = defaultdict(lambda: defaultdict(str))
 
-# Persistence helpers
-def load_story_from_disk(story_id):
-    try:
-        with open(f"stories/{story_id}.json", "r") as f:
-            stories[story_id] = json.load(f)
-            print(f"[DEBUG] Reloaded {story_id} from disk")
-            return True
-    except Exception as e:
-        print(f"[ERROR] Could not load {story_id}: {e}")
+# Load all stories into memory
+def load_all_stories():
+    result = conn.execute("SELECT id, data FROM stories")
+    for row in result.rows:
+        stories[row["id"]] = json.loads(row["data"])
+
+load_all_stories()
+
+# ---------------------------
+# DB Persistence Helpers
+# ---------------------------
+def load_story_from_db(story_id):
+    result = conn.execute("SELECT data FROM stories WHERE id = ?", [story_id])
+    if not result.rows:
         return False
+    stories[story_id] = json.loads(result.rows[0]["data"])
+    return True
 
-def save_story_to_disk(story_id):
-    try:
-        with open(f"stories/{story_id}.json", "w") as f:
-            json.dump(stories[story_id], f)
-    except Exception as e:
-        print(f"[ERROR] Could not save {story_id}: {e}")
+def save_story_to_db(story_id):
+    conn.execute(
+        "INSERT OR REPLACE INTO stories (id, data) VALUES (?, ?)",
+        [story_id, json.dumps(stories[story_id])]
+    )
 
-# Load all existing stories
-for filename in os.listdir("stories"):
-    if filename.endswith(".json"):
-        story_id = filename[:-5]
-        load_story_from_disk(story_id)
+def save_milestone_to_db(story_id, milestone_data):
+    conn.execute(
+        "INSERT INTO milestones (story_id, data) VALUES (?, ?)",
+        [story_id, json.dumps(milestone_data)]
+    )
 
-# Canon rules
+def get_milestones(story_id):
+    result = conn.execute("SELECT data FROM milestones WHERE story_id = ?", [story_id])
+    return [json.loads(row["data"]) for row in result.rows]
+
+def save_character_to_db(character_id, data):
+    conn.execute(
+        "INSERT OR REPLACE INTO characters (id, data) VALUES (?, ?)",
+        [character_id, json.dumps(data)]
+    )
+
+def get_character_from_db(character_id):
+    result = conn.execute("SELECT data FROM characters WHERE id = ?", [character_id])
+    return json.loads(result.rows[0]["data"]) if result.rows else None
+
+def list_all_characters():
+    result = conn.execute("SELECT id, data FROM characters")
+    return {row["id"]: json.loads(row["data"]) for row in result.rows}
+
+# ---------------------------
+# Canon & Characters Setup
+# ---------------------------
 canon_rules = [
     "Gossip Girl's narration ended in Season 6 finale. Dan was revealed as Gossip Girl.",
     "Chuck and Blair are married and have a son, Henry.",
@@ -53,168 +109,59 @@ canon_rules = [
     "Do not pre-load romantic intimacy unless canon or established in-story."
 ]
 
-# Character definitions
 character_aliases = {
-    # Serena
-    "serena": "serena",
-    "serena van der woodsen": "serena",
-
-    # Blair
-    "blair": "blair",
-    "blair waldorf": "blair",
-    "blair waldorf bass": "blair",
-
-    # Chuck
-    "chuck": "chuck",
-    "charles": "chuck",
-    "chuck bass": "chuck",
-
-    # Lily
-    "lily": "lily",
-    "lily van der woodsen": "lily",
-    "lily bass": "lily",
-    "lily rhodes": "lily",
-
-    # Niklaus
-    "niklaus": "niklaus",
-    "nik": "niklaus",
-    "klaus": "niklaus",
-    "niklaus von wolfram": "niklaus",
-
-    # Noah
-    "noah": "noah",
-    "noah von wolfram": "noah",
-
-    # Dan
-    "dan": "dan",
-    "daniel": "dan",
-    "dan humphrey": "dan",
-
-    # Vivian
-    "vivian": "vivian",
-    "vivian taylor": "vivian"
+    "serena": "serena", "serena van der woodsen": "serena",
+    "blair": "blair", "blair waldorf": "blair", "blair waldorf bass": "blair",
+    "chuck": "chuck", "charles": "chuck", "chuck bass": "chuck",
+    "lily": "lily", "lily van der woodsen": "lily", "lily bass": "lily", "lily rhodes": "lily",
+    "niklaus": "niklaus", "nik": "niklaus", "klaus": "niklaus", "niklaus von wolfram": "niklaus",
+    "noah": "noah", "noah von wolfram": "noah",
+    "dan": "dan", "daniel": "dan", "dan humphrey": "dan",
+    "vivian": "vivian", "vivian taylor": "vivian"
 }
-
-
-characters = {
-    "serena": {
-        "name": "Serena van der Woodsen",
-        "personality": "Warm, magnetic, laid-back, spontaneous, and emotionally intuitive.",
-        "voiceTraits": ["Light but emotionally weighted", "Charismatic", "Playful subtext"],
-        "relationships": {
-            "blair": "Best friend, rival",
-            "dan": "Ex-husband",
-            "chuck": "Adoptive brother",
-            "lily": "Mother",
-            "william": "Father",
-            "noah": "Romantic partner"
-        },
-        "speechStyle": "Witty, soft, unfiltered, emotionally immediate."
-    },
-    "blair": {
-        "name": "Blair Waldorf",
-        "personality": "Ambitious, strategic, fashion-forward, sharp-tongued.",
-        "voiceTraits": ["Witty", "Poised", "Emotionally barbed"],
-        "relationships": {
-            "serena": "Best friend and rival",
-            "chuck": "Husband",
-            "eleanor": "Mother"
-        },
-        "speechStyle": "Elegant, biting, performative."
-    },
-    "noah": {
-        "name": "Noah von Wolfram",
-        "personality": "Disciplined, exacting, emotionally reserved, and logical.",
-        "voiceTraits": ["Dry wit", "Minimalist", "Introspective"],
-        "relationships": {
-            "serena": "Romantic partner",
-            "otto": "Father",
-            "niklaus": "Cousin"
-        },
-        "speechStyle": "Minimal, deliberate."
-    },
-    "niklaus": {
-        "name": "Niklaus von Wolfram",
-        "personality": "F1 driver and architect. Brilliant, sensual, emotionally complex.",
-        "voiceTraits": ["Quiet intensity", "Boyish charm", "European polish"],
-        "relationships": {
-            "noah": "Cousin",
-            "otto": "Uncle",
-            "vivian": "Half-sister"
-        },
-        "speechStyle": "Clipped, intelligent, formal with subtext."
-    },
-    "vivian": {
-        "name": "Vivian Taylor",
-        "personality": "British wit, glamorous, sardonic. Emotionally guarded.",
-        "voiceTraits": ["Sardonic", "Charismatic", "Complex"],
-        "relationships": {
-            "niklaus": "Half-brother",
-            "noah": "Half-cousin"
-        },
-        "speechStyle": "Elegant, sharp, ironic."
-    },
-    "lily": {
-        "name": "Lily van der Woodsen",
-        "personality": "Elegant, composed, maternal. Privately conflicted.",
-        "voiceTraits": ["Sincere", "Polished", "Resilient"],
-        "relationships": {
-            "serena": "Daughter",
-            "chuck": "Adoptive son"
-        },
-        "speechStyle": "Measured, warm, restrained."
-    },
-    "chuck": {
-        "name": "Chuck Bass",
-        "personality": "Darkly romantic, intelligent, controlled. Deeply loyal.",
-        "voiceTraits": ["Seductive", "Calculated", "Emotionally charged"],
-        "relationships": {
-            "blair": "Wife",
-            "serena": "Adoptive sister",
-            "lily": "Adoptive mother"
-        },
-        "speechStyle": "Low, deliberate, suggestive."
-    }
-}
-characters_data = characters  # alias for prompts
 
 # -------------------------------
 # Routes
 # -------------------------------
 @app.route("/", methods=["GET"])
 def home():
-    return "Gossip Girl Storytelling API is running!"
+    return "Gossip Girl API with Turso storage is running."
 
 @app.route("/canon-rules", methods=["GET"])
 def get_canon_rules():
     return jsonify({"rules": canon_rules})
 
-@app.route("/characters/<name>", methods=["GET"])
-def get_character_profile(name):
-    key = name.lower()
-    true_key = character_aliases.get(key)
-    if not true_key:
-        return jsonify({"error": "Character not found"}), 404
-    return jsonify(characters[true_key])
+@app.route("/characters", methods=["GET"])
+def get_characters():
+    return jsonify(list_all_characters())
 
-@app.route("/relationships/<character>", methods=["GET"])
-def get_relationships(character):
-    character = character.lower()
-    return jsonify({"relationships": relationships.get(character, {})})
+@app.route("/characters/<name>", methods=["GET"])
+def get_character(name):
+    key = character_aliases.get(name.lower())
+    if not key:
+        return jsonify({"error": "Character not found"}), 404
+    character = get_character_from_db(key)
+    if not character:
+        return jsonify({"error": "Character not found in DB"}), 404
+    return jsonify(character)
+
+@app.route("/characters/<name>", methods=["POST"])
+def create_or_update_character(name):
+    data = request.json
+    save_character_to_db(name.lower(), data)
+    return jsonify({"status": f"{name} saved"})
 
 @app.route("/stories", methods=["GET"])
 def list_stories():
-    return jsonify({
-        "stories": [
-            {
-                "id": sid,
-                "title": s["title"],
-                "characters": s["characters"],
-                "events": len(s["events"])
-            }
-            for sid, s in stories.items()
-        ]
-    })
+    return jsonify([
+        {
+            "id": sid,
+            "title": s["title"],
+            "characters": s["characters"],
+            "events": len(s["events"])
+        }
+        for sid, s in stories.items()
+    ])
 
 @app.route("/story", methods=["POST"])
 def create_story():
@@ -226,7 +173,7 @@ def create_story():
         "events": [],
         "summary": ""
     }
-    save_story_to_disk(story_id)
+    save_story_to_db(story_id)
     return jsonify({"storyId": story_id})
 
 @app.route("/story/<story_id>/events", methods=["POST"])
@@ -240,11 +187,11 @@ def add_event(story_id):
         return jsonify({"error": "sceneText is required"}), 400
 
     if story_id not in stories:
-        if not load_story_from_disk(story_id):
+        if not load_story_from_db(story_id):
             return jsonify({"error": "Story not found"}), 404
 
     stories[story_id]["events"].append(data)
-    save_story_to_disk(story_id)
+    save_story_to_db(story_id)
 
     if is_milestone_worthy(scene_text) and not already_logged(story_id, scene_text):
         milestone = {
@@ -254,22 +201,14 @@ def add_event(story_id):
             "hash": hashlib.md5(scene_text.strip().encode()).hexdigest(),
             "source": "auto"
         }
-        with open(os.path.join("milestones", f"{story_id}.json"), "a") as f:
-            f.write(json.dumps(milestone) + "\n")
-
-    for i, c1 in enumerate(char_list):
-        for c2 in char_list[i+1:]:
-            emotional_context = emotion_map.get(c1) or emotion_map.get(c2) or "interacted"
-            prev = relationships[c1][c2]
-            if emotional_context and emotional_context not in prev:
-                relationships[c1][c2] += f"{emotional_context}, "
+        save_milestone_to_db(story_id, milestone)
 
     return jsonify({"status": "event added"})
 
 @app.route("/story/<story_id>/summary", methods=["GET"])
 def get_summary(story_id):
     if story_id not in stories:
-        if not load_story_from_disk(story_id):
+        if not load_story_from_db(story_id):
             return jsonify({"error": "Story not found"}), 404
     story = stories[story_id]
     summary = " ".join(e["sceneText"] for e in story.get("events", []))[:500]
@@ -278,10 +217,22 @@ def get_summary(story_id):
         "majorEvents": [e["sceneText"][:60] for e in story.get("events", [])]
     })
 
+@app.route("/milestones/<story_id>", methods=["GET"])
+def view_milestones(story_id):
+    return jsonify({"milestones": get_milestones(story_id)})
+
+@app.route("/milestones/<story_id>", methods=["POST"])
+def save_manual_milestone(story_id):
+    data = request.json
+    data["hash"] = hashlib.md5(data.get("scene", "").strip().encode()).hexdigest()
+    data["source"] = "manual"
+    save_milestone_to_db(story_id, data)
+    return jsonify({"status": "milestone saved"})
+
 @app.route("/story/<story_id>/fork", methods=["POST"])
 def fork_story(story_id):
     if story_id not in stories:
-        if not load_story_from_disk(story_id):
+        if not load_story_from_db(story_id):
             return jsonify({"error": "Source story not found"}), 404
 
     new_id = f"story-{len(stories)+1}"
@@ -292,89 +243,19 @@ def fork_story(story_id):
         "summary": stories[story_id]["summary"],
         "forkedFrom": story_id
     }
-    save_story_to_disk(new_id)
+    save_story_to_db(new_id)
     return jsonify({"forkedId": new_id})
-
-@app.route("/story/<story_id>/restart", methods=["POST"])
-def restart_story(story_id):
-    if story_id not in stories:
-        if not load_story_from_disk(story_id):
-            return jsonify({"error": "Story not found"}), 404
-    stories[story_id]["events"] = []
-    stories[story_id]["summary"] = ""
-    save_story_to_disk(story_id)
-    return jsonify({"status": f"{story_id} restarted, milestones retained"})
 
 @app.route("/story/<story_id>", methods=["DELETE"])
 def delete_story(story_id):
     stories.pop(story_id, None)
-    os.remove(os.path.join("stories", f"{story_id}.json")) if os.path.exists(os.path.join("stories", f"{story_id}.json")) else None
-    os.remove(os.path.join("milestones", f"{story_id}.json")) if os.path.exists(os.path.join("milestones", f"{story_id}.json")) else None
+    conn.execute("DELETE FROM stories WHERE id = ?", [story_id])
+    conn.execute("DELETE FROM milestones WHERE story_id = ?", [story_id])
     return jsonify({"status": f"{story_id} deleted"})
 
-@app.route("/milestones/<story_id>", methods=["GET"])
-def view_milestones(story_id):
-    path = os.path.join("milestones", f"{story_id}.json")
-    if not os.path.exists(path):
-        return jsonify({"milestones": []})
-    with open(path, "r") as f:
-        return jsonify({"milestones": [json.loads(line) for line in f]})
-
-@app.route("/milestones/<story_id>", methods=["POST"])
-def save_milestone(story_id):
-    data = request.json
-    path = os.path.join("milestones", f"{story_id}.json")
-    with open(path, "a") as f:
-        f.write(json.dumps(data) + "\n")
-    return jsonify({"status": "milestone saved"})
-
-@app.route("/generate-prompt/<story_id>", methods=["GET"])
-def generate_prompt(story_id):
-    if story_id not in stories:
-        if not load_story_from_disk(story_id):
-            return jsonify({"error": "Story not found"}), 404
-
-    story = stories[story_id]
-    title = story.get("title", "Untitled Story")
-    characters_list = story.get("characters", [])
-    events = story.get("events", [])
-    summary = story.get("summary", "")
-
-    milestone_path = os.path.join("milestones", f"{story_id}.json")
-    recent_milestones = []
-    if os.path.exists(milestone_path):
-        with open(milestone_path, "r") as f:
-            all_milestones = [json.loads(line) for line in f]
-            recent_milestones = all_milestones[-3:]
-
-    recent_events = [e["sceneText"] for e in events[-2:]] if not recent_milestones else []
-
-    prompt_lines = [
-        "GOSSIP GIRL CONTINUATION — SERIALIZED CANON FORMAT",
-        "",
-        f"Title: {title}",
-        "",
-        "Main Characters:"
-    ] + [
-        f"{characters_data[c]['name']}: {characters_data[c]['personality']}"
-        for c in characters_list if c in characters_data
-    ] + [
-        "",
-        "Story Summary:",
-        summary or "No summary saved.",
-        "",
-        "Recent Milestones:" if recent_milestones else "Recent Events:"
-    ] + (
-        [f"- {m['scene'][:280]}..." for m in recent_milestones]
-        if recent_milestones else [f"- {e[:280]}..." for e in recent_events]
-    ) + [
-        "",
-        "Continue the scene or provide dramatic story options that build on this context:"
-    ]
-
-    return jsonify({"prompt": "\n".join(prompt_lines)})
-
-# Milestone helpers
+# -------------------------------
+# Helpers
+# -------------------------------
 def is_milestone_worthy(text):
     text = text.lower()
     return any(kw in text for kw in [
@@ -384,14 +265,13 @@ def is_milestone_worthy(text):
     ])
 
 def already_logged(story_id, scene_text):
-    path = os.path.join("milestones", f"{story_id}.json")
     hash_value = hashlib.md5(scene_text.strip().encode()).hexdigest()
-    if not os.path.exists(path):
-        return False
-    with open(path, "r") as f:
-        return any(json.loads(line).get("hash") == hash_value for line in f)
+    milestones = get_milestones(story_id)
+    return any(m["hash"] == hash_value for m in milestones)
 
-# Server launch
+# -------------------------------
+# Server Launch
+# -------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
