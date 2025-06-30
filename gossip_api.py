@@ -126,6 +126,85 @@ character_aliases = {
 }
 
 # -------------------------------
+# Canonical Character Profiles
+# -------------------------------
+canonical_characters = {
+    "serena": {
+        "name": "Serena van der Woodsen",
+        "personality": "Warm, magnetic, laid-back, spontaneous, and emotionally intuitive.",
+        "voiceTraits": ["Light but emotionally weighted", "Charismatic", "Playful subtext"],
+        "relationships": {
+            "blair": "Best friend, rival", "dan": "Ex-husband", "chuck": "Adoptive brother",
+            "lily": "Mother", "william": "Father", "noah": "Romantic partner"
+        },
+        "speechStyle": "Witty, soft, unfiltered, emotionally immediate."
+    },
+    "blair": {
+        "name": "Blair Waldorf",
+        "personality": "Ambitious, strategic, fashion-forward, sharp-tongued.",
+        "voiceTraits": ["Witty", "Poised", "Emotionally barbed"],
+        "relationships": {
+            "serena": "Best friend and rival", "chuck": "Husband", "eleanor": "Mother"
+        },
+        "speechStyle": "Elegant, biting, performative."
+    },
+    "noah": {
+        "name": "Noah von Wolfram",
+        "personality": "Disciplined, exacting, emotionally reserved, and logical.",
+        "voiceTraits": ["Dry wit", "Minimalist", "Introspective"],
+        "relationships": {
+            "serena": "Romantic partner", "otto": "Father", "niklaus": "Cousin"
+        },
+        "speechStyle": "Minimal, deliberate."
+    },
+    "niklaus": {
+        "name": "Niklaus von Wolfram",
+        "personality": "F1 driver and architect. Brilliant, sensual, emotionally complex.",
+        "voiceTraits": ["Quiet intensity", "Boyish charm", "European polish"],
+        "relationships": {
+            "noah": "Cousin", "otto": "Uncle", "vivian": "Half-sister"
+        },
+        "speechStyle": "Clipped, intelligent, formal with subtext."
+    },
+    "vivian": {
+        "name": "Vivian Taylor",
+        "personality": "British wit, glamorous, sardonic. Emotionally guarded.",
+        "voiceTraits": ["Sardonic", "Charismatic", "Complex"],
+        "relationships": {
+            "niklaus": "Half-brother", "noah": "Half-cousin"
+        },
+        "speechStyle": "Elegant, sharp, ironic."
+    },
+    "lily": {
+        "name": "Lily van der Woodsen",
+        "personality": "Elegant, composed, maternal. Privately conflicted.",
+        "voiceTraits": ["Sincere", "Polished", "Resilient"],
+        "relationships": {
+            "serena": "Daughter", "chuck": "Adoptive son"
+        },
+        "speechStyle": "Measured, warm, restrained."
+    },
+    "chuck": {
+        "name": "Chuck Bass",
+        "personality": "Darkly romantic, intelligent, controlled. Deeply loyal.",
+        "voiceTraits": ["Seductive", "Calculated", "Emotionally charged"],
+        "relationships": {
+            "blair": "Wife", "serena": "Adoptive sister", "lily": "Adoptive mother"
+        },
+        "speechStyle": "Low, deliberate, suggestive."
+    }
+}
+
+# --- Inject characters into Turso DB if not already there ---
+def ensure_characters_exist():
+    existing = list_all_characters()
+    for cid in canonical_characters:
+        if cid not in existing:
+            save_character_to_db(cid, canonical_characters[cid])
+
+ensure_characters_exist()  # ✅ This must be called after canonical_characters
+
+# -------------------------------
 # Routes
 # -------------------------------
 @app.route("/", methods=["GET"])
@@ -264,6 +343,13 @@ def delete_story(story_id):
     conn.execute("DELETE FROM stories WHERE id = ?", [story_id])
     conn.execute("DELETE FROM milestones WHERE story_id = ?", [story_id])
     return jsonify({"status": f"{story_id} deleted"})
+
+@app.route("/reset-characters", methods=["POST"])
+def reset_characters():
+    for char_id, profile in canonical_characters.items():
+        save_character_to_db(char_id, profile)
+    return jsonify({"status": "Canonical characters injected into DB."})
+
 
 # -------------------------------
 # Helpers
