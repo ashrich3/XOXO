@@ -222,6 +222,13 @@ def get_summary(story_id):
         "majorEvents": [e["sceneText"][:60] for e in story.get("events", [])]
     })
 
+@app.route("/story/<story_id>/events", methods=["GET"])
+def get_all_events(story_id):
+    if story_id not in stories:
+        if not load_story_from_db(story_id):
+            return jsonify({"error": "Story not found"}), 404
+    return jsonify(stories[story_id].get("events", []))
+
 @app.route("/milestones/<story_id>", methods=["GET"])
 def view_milestones(story_id):
     return jsonify({"milestones": get_milestones(story_id)})
