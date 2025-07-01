@@ -7,49 +7,27 @@ import libsql_client
 
 app = Flask(__name__)
 
-# Turso DB setup
+# --- Turso DB setup ---
 TURSO_URL = os.getenv("TURSO_URL")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN")
 
 print("🔍 TURSO_URL =", TURSO_URL)
 print("🔍 TURSO_TOKEN =", TURSO_TOKEN[:10] + "..." if TURSO_TOKEN else "MISSING")
 
-
 conn = libsql_client.create_client_sync(
-    url=os.getenv("TURSO_URL"),
-    auth_token=os.getenv("TURSO_TOKEN")
+    url=TURSO_URL,
+    auth_token=TURSO_TOKEN
 )
 
+# --- Create tables if not exist ---
+conn.execute("""CREATE TABLE IF NOT EXISTS stories (id TEXT PRIMARY KEY, data TEXT)""")
+conn.execute("""CREATE TABLE IF NOT EXISTS milestones (story_id TEXT, data TEXT)""")
+conn.execute("""CREATE TABLE IF NOT EXISTS characters (id TEXT PRIMARY KEY, data TEXT)""")
 
-# --- Create tables if they don't exist ---
-conn.execute("""
-    CREATE TABLE IF NOT EXISTS stories (
-        id TEXT PRIMARY KEY,
-        data TEXT
-    )
-""")
-
-conn.execute("""
-    CREATE TABLE IF NOT EXISTS milestones (
-        story_id TEXT,
-        data TEXT
-    )
-""")
-
-conn.execute("""
-    CREATE TABLE IF NOT EXISTS characters (
-        id TEXT PRIMARY KEY,
-        data TEXT
-    )
-""")
-
-# ---------------------------
-# In-memory cache
-# ---------------------------
+# --- In-memory cache ---
 stories = {}
 relationships = defaultdict(lambda: defaultdict(str))
 
-# Load all stories into memory
 def load_all_stories():
     result = conn.execute("SELECT id, data FROM stories")
     for row in result.rows:
@@ -57,9 +35,7 @@ def load_all_stories():
 
 load_all_stories()
 
-# ---------------------------
-# DB Persistence Helpers
-# ---------------------------
+# --- DB helpers ---
 def load_story_from_db(story_id):
     result = conn.execute("SELECT data FROM stories WHERE id = ?", [story_id])
     if not result.rows:
@@ -97,9 +73,7 @@ def list_all_characters():
     result = conn.execute("SELECT id, data FROM characters")
     return {row["id"]: json.loads(row["data"]) for row in result.rows}
 
-# ---------------------------
-# Canon & Characters Setup
-# ---------------------------
+# --- Canon setup ---
 canon_rules = [
     "Gossip Girl's narration ended in Season 6 finale. Dan was revealed as Gossip Girl.",
     "Chuck and Blair are married and have a son, Henry.",
@@ -125,9 +99,6 @@ character_aliases = {
     "vivian": "vivian", "vivian taylor": "vivian"
 }
 
-# -------------------------------
-# Canonical Character Profiles
-# -------------------------------
 canonical_characters = {
     "serena": {
         "name": "Serena van der Woodsen",
@@ -195,18 +166,15 @@ canonical_characters = {
     }
 }
 
-# --- Inject characters into Turso DB if not already there ---
 def ensure_characters_exist():
     existing = list_all_characters()
     for cid in canonical_characters:
         if cid not in existing:
             save_character_to_db(cid, canonical_characters[cid])
 
-ensure_characters_exist()  # ✅ This must be called after canonical_characters
+ensure_characters_exist()
 
-# -------------------------------
-# Routes
-# -------------------------------
+# --- Routes ---
 @app.route("/", methods=["GET"])
 def home():
     return "Gossip Girl API with Turso storage is running."
@@ -308,6 +276,13 @@ def get_all_events(story_id):
             return jsonify({"error": "Story not found"}), 404
     return jsonify(stories[story_id].get("events", []))
 
+@app.route("/story/<story_id>/continue", methods=["GET"])
+def continue_story(story_id):
+    if story_id not in stories:
+        if not load_story_from_db(story_id):
+            return jsonify({"error": "Story not found"}), 404
+    return jsonify({"recentEvents": stories[story_id].get("events", [])})
+
 @app.route("/milestones/<story_id>", methods=["GET"])
 def view_milestones(story_id):
     return jsonify({"milestones": get_milestones(story_id)})
@@ -325,7 +300,6 @@ def fork_story(story_id):
     if story_id not in stories:
         if not load_story_from_db(story_id):
             return jsonify({"error": "Source story not found"}), 404
-
     new_id = f"story-{len(stories)+1}"
     stories[new_id] = {
         "title": stories[story_id]["title"] + " (Fork)",
@@ -350,10 +324,7 @@ def reset_characters():
         save_character_to_db(char_id, profile)
     return jsonify({"status": "Canonical characters injected into DB."})
 
-
-# -------------------------------
-# Helpers
-# -------------------------------
+# --- Helpers ---
 def is_milestone_worthy(text):
     text = text.lower()
     return any(kw in text for kw in [
@@ -367,9 +338,7 @@ def already_logged(story_id, scene_text):
     milestones = get_milestones(story_id)
     return any(m["hash"] == hash_value for m in milestones)
 
-# -------------------------------
-# Server Launch
-# -------------------------------
+# --- Launch ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
